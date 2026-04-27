@@ -39,8 +39,61 @@ Three independently deployable microservices:
 
 - Docker and Docker Compose
 - Java 21 (for building from source)
+- AWS CLI (for queue inspection; optional)
 
-### Option 1: Run with the infrastructure docker-compose files
+### Option 1: Central infrastructure docker-compose (recommended)
+
+This repository provides a single `docker-compose.yml` that starts all shared
+infrastructure — Redis, MongoDB, and LocalStack (SQS) — with the SQS queues
+created automatically on startup.
+
+```bash
+# 1. Clone all service repositories
+git clone https://github.com/ThiagoCintra/LoginService
+git clone https://github.com/ThiagoCintra/TransactionService
+git clone https://github.com/ThiagoCintra/GameService
+
+# 2. Start shared infrastructure from THIS repository
+cd itau-microservices-infra
+make up          # or: docker compose up -d
+
+# 3. Verify infrastructure is healthy
+make health
+
+# 4. Copy and adjust environment variables
+cp .env.example .env
+
+# 5. Build each service (Java 21+)
+cd ../LoginService       && ./mvnw clean package -DskipTests
+cd ../TransactionService && ./mvnw clean package -DskipTests
+cd ../GameService        && ./mvnw clean package -DskipTests
+
+# 6. Start services (each in its own terminal or as background processes)
+cd ../LoginService       && java -jar target/*.jar &
+cd ../TransactionService && java -jar target/*.jar &
+cd ../GameService        && java -jar target/*.jar &
+
+# 7. Run the end-to-end smoke test
+cd ../itau-microservices-infra
+make e2e USERNAME=customer123 PASSWORD=secret
+```
+
+**Infrastructure components started by `docker compose up -d`:**
+
+| Container  | Port  | Purpose                              |
+|------------|-------|--------------------------------------|
+| `redis`    | 6379  | Session storage + rate limiting      |
+| `mongo`    | 27017 | Game event log (MongoDB `game_db`)   |
+| `localstack` | 4566 | AWS SQS emulation (queues auto-created) |
+
+**SQS queues created automatically on LocalStack startup:**
+
+| Queue              | Purpose                                        |
+|--------------------|------------------------------------------------|
+| `transactions`     | Main event queue (TransactionService → GameService) |
+| `transactions-dlq` | Dead Letter Queue (after 5 failed receive attempts) |
+
+### Option 2: Per-service docker-compose files
 
 Each service has its own `docker-compose.yml`. Start the shared infrastructure first, then start each service:
 
@@ -62,7 +115,7 @@ docker-compose up -d
 > which automatically creates the SQS queues (`transactions` and `transactions-dlq`)
 > via an init script on startup.
 
-### Option 2: Run each service locally (development mode)
+### Option 3: Run each service locally (development mode)
 
 ```bash
 # Start Redis

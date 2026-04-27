@@ -1,0 +1,76 @@
+version: "3.9"
+
+services:
+
+  # ─────────────────────────────────────────────
+  # Redis — session storage and rate limiting
+  # Used by: LoginService
+  # ─────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - itau-net
+
+  # ─────────────────────────────────────────────
+  # MongoDB — event log / gamification audit store
+  # Used by: GameService
+  # ─────────────────────────────────────────────
+  mongo:
+    image: mongo:6.0
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: game_db
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - itau-net
+
+  # ─────────────────────────────────────────────
+  # LocalStack — AWS SQS emulation
+  # Used by: TransactionService (producer) and GameService (consumer)
+  # Queues created automatically by the init script on startup
+  # ─────────────────────────────────────────────
+  localstack:
+    image: localstack/localstack:3.0
+    container_name: localstack
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: sqs
+      DEFAULT_REGION: us-east-1
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - "./localstack/init:/etc/localstack/init/ready.d"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "awslocal sqs list-queues"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks:
+      - itau-net
+
+volumes:
+  mongo-data:
+
+networks:
+  itau-net:
+    driver: bridge
