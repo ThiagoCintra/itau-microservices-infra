@@ -2,7 +2,13 @@
 # Itaú Microservices — complete platform Makefile
 # =============================================================================
 
-.PHONY: up down restart logs health e2e queues clean
+.PHONY: bootstrap up down restart logs health e2e queues clean
+
+# ── One-command bootstrap ─────────────────────────────────────────────────────
+
+## Download the platform (ZIP, no git clone) and start everything — single command
+bootstrap:
+	@bash setup.sh
 
 # ── Full platform lifecycle ───────────────────────────────────────────────────
 

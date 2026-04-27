@@ -4,6 +4,29 @@ This repository is the **infrastructure and documentation hub** for the Itaú Mi
 
 ---
 
+## ⚡ One-Command Bootstrap (no `git clone` required)
+
+Run the entire platform — infrastructure and all three services — with a single command:
+
+```bash
+curl -fsSL \
+  https://raw.githubusercontent.com/ThiagoCintra/itau-microservices-infra/main/setup.sh \
+  | bash
+```
+
+`setup.sh` will:
+1. Download this repository as a ZIP via `curl` (no `git clone`)
+2. Build and start all containers with `docker compose up -d --build`
+3. Wait until every service is healthy
+4. Print service URLs and quick-start curl examples
+5. Run the end-to-end smoke test automatically
+
+**Prerequisites:** Docker (with Compose v2 plugin or standalone `docker-compose`).
+
+> If you already have the repository on disk, run `make bootstrap` (or `bash setup.sh`) from the repo root instead.
+
+---
+
 ## Overview
 
 The platform rewards customers for using PIX — Itaú's instant payment product — through a gamification layer that awards points, unlocks levels, and tracks benefit redemptions. The key design principle is that **gamification must never affect the transaction path**: transactions are accepted immediately, and gamification runs asynchronously.
@@ -37,45 +60,57 @@ Three independently deployable microservices:
 
 ### Prerequisites
 
-- Docker and Docker Compose
-- Java 21 (for building from source)
+- Docker (with Compose v2 plugin or standalone `docker-compose`)
+- `curl` and `unzip` (standard on macOS/Linux; available in GitHub Codespaces)
 - AWS CLI (for queue inspection; optional)
 
-### Option 1: Central infrastructure docker-compose (recommended)
-
-This repository provides a single `docker-compose.yml` that starts all shared
-infrastructure — Redis, MongoDB, and LocalStack (SQS) — with the SQS queues
-created automatically on startup.
+### Option 1: Single-command bootstrap — recommended ✅
 
 ```bash
-# 1. Clone all service repositories
-git clone https://github.com/ThiagoCintra/LoginService
-git clone https://github.com/ThiagoCintra/TransactionService
-git clone https://github.com/ThiagoCintra/GameService
+# Download and run the full platform with one command (no git clone)
+curl -fsSL \
+  https://raw.githubusercontent.com/ThiagoCintra/itau-microservices-infra/main/setup.sh \
+  | bash
+```
 
-# 2. Start shared infrastructure from THIS repository
-cd itau-microservices-infra
-make up          # or: docker compose up -d
+The script downloads this repository as a ZIP, builds all Docker images, starts
+every container, waits for health checks, and runs the e2e smoke test.
 
-# 3. Verify infrastructure is healthy
+### Option 2: Manual setup from inside the repository
+
+If you have already downloaded or extracted the repository:
+
+```bash
+# Build images and start the full platform
+make bootstrap      # equivalent to: bash setup.sh (auto-skips ZIP download)
+
+# — or, if you just want to start containers —
+make up             # docker compose up -d --build
+
+# Verify all services are healthy
 make health
 
-# 4. Copy and adjust environment variables
-cp .env.example .env
-
-# 5. Build each service (Java 21+)
-cd ../LoginService       && ./mvnw clean package -DskipTests
-cd ../TransactionService && ./mvnw clean package -DskipTests
-cd ../GameService        && ./mvnw clean package -DskipTests
-
-# 6. Start services (each in its own terminal or as background processes)
-cd ../LoginService       && java -jar target/*.jar &
-cd ../TransactionService && java -jar target/*.jar &
-cd ../GameService        && java -jar target/*.jar &
-
-# 7. Run the end-to-end smoke test
-cd ../itau-microservices-infra
+# Run the end-to-end smoke test
 make e2e USERNAME=customer123 PASSWORD=secret
+```
+
+### Option 3: Download repo ZIP manually, then compose up
+
+```bash
+# 1. Download the repository as a ZIP (no git clone)
+curl -L \
+  https://github.com/ThiagoCintra/itau-microservices-infra/archive/refs/heads/main.zip \
+  -o itau-microservices-infra.zip
+
+# 2. Extract
+unzip itau-microservices-infra.zip
+cd itau-microservices-infra-main
+
+# 3. Start the platform
+docker compose up -d --build
+
+# 4. Wait and verify
+make health
 ```
 
 **Infrastructure components started by `docker compose up -d`:**
@@ -85,6 +120,9 @@ make e2e USERNAME=customer123 PASSWORD=secret
 | `redis`    | 6379  | Session storage + rate limiting      |
 | `mongo`    | 27017 | Game event log (MongoDB `game_db`)   |
 | `localstack` | 4566 | AWS SQS emulation (queues auto-created) |
+| `login-service` | 8081 | Authentication + JWT (Python/Flask) |
+| `transaction-service` | 8080 | Transaction gateway (Python/Flask) |
+| `game-service` | 8082 | Gamification consumer (Python/Flask) |
 
 **SQS queues created automatically on LocalStack startup:**
 
@@ -92,46 +130,6 @@ make e2e USERNAME=customer123 PASSWORD=secret
 |--------------------|------------------------------------------------|
 | `transactions`     | Main event queue (TransactionService → GameService) |
 | `transactions-dlq` | Dead Letter Queue (after 5 failed receive attempts) |
-
-### Option 2: Per-service docker-compose files
-
-Each service has its own `docker-compose.yml`. Start the shared infrastructure first, then start each service:
-
-```bash
-# 1. Start LoginService (Redis + H2)
-cd LoginService
-docker-compose up -d
-
-# 2. Start TransactionService (LocalStack SQS + WireMock for LoginService mock)
-cd TransactionService
-docker-compose up -d
-
-# 3. Start GameService (LocalStack SQS + MongoDB)
-cd GameService
-docker-compose up -d
-```
-
-> The `docker-compose.yml` files in TransactionService and GameService include LocalStack,
-> which automatically creates the SQS queues (`transactions` and `transactions-dlq`)
-> via an init script on startup.
-
-### Option 3: Run each service locally (development mode)
-
-```bash
-# Start Redis
-docker run -p 6379:6379 redis:7
-
-# Start LocalStack (SQS)
-docker run -p 4566:4566 -e SERVICES=sqs localstack/localstack:3.0
-
-# Start MongoDB
-docker run -p 27017:27017 mongo:6.0
-
-# Build and run each service
-cd LoginService    && ./mvnw spring-boot:run
-cd TransactionService && ./mvnw spring-boot:run
-cd GameService     && ./mvnw spring-boot:run
-```
 
 ---
 
