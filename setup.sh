@@ -29,6 +29,10 @@
 
 set -euo pipefail
 
+# ── Non-interactive / CI mode ─────────────────────────────────────────────────
+export CI="${CI:-true}"
+export SKIP_PROMPTS="${SKIP_PROMPTS:-1}"
+
 # ── Colours ───────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -156,6 +160,8 @@ if ! ${all_healthy}; then
   warn "Some services did not become healthy within ${HEALTH_TIMEOUT}s."
   warn "Check logs with:  ${COMPOSE_CMD} logs -f"
   warn "Or run:           make health"
+  warn "Dumping container logs for diagnosis..."
+  ${COMPOSE_CMD} logs --no-color --tail=50 || true
 else
   success "All services are healthy!"
 fi
@@ -196,9 +202,6 @@ echo ""
 if [[ "${SKIP_E2E:-0}" != "1" ]] && ${all_healthy}; then
   info "Running end-to-end smoke test..."
   echo ""
-  if bash scripts/e2e.sh "${USERNAME:-customer123}" "${PASSWORD:-secret}"; then
-    success "End-to-end smoke test passed."
-  else
-    warn "End-to-end smoke test finished with errors. Check output above."
-  fi
+  bash scripts/e2e.sh "${USERNAME:-customer123}" "${PASSWORD:-secret}" \
+    || warn "E2E failed but continuing setup"
 fi
