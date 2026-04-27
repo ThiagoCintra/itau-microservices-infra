@@ -13,6 +13,15 @@ Its responsibilities are:
 
 TransactionService is **intentionally unaware of gamification logic**. Its only concern is transaction acceptance — what happens downstream is delegated asynchronously.
 
+### Why This Boundary?
+
+TransactionService exists as a separate service because **transaction acceptance is the revenue-critical operation** that must be available, fast, and observable independently of everything else.
+
+Key design decisions that follow from this:
+- **No knowledge of gamification**: TransactionService publishes an event and moves on. Adding gamification awareness would couple it to the GameService deployment lifecycle and failure modes.
+- **202 Accepted semantics**: The service accepts the transaction (validates it, enqueues it) but does not wait for downstream processing. This is architecturally honest and keeps the critical path short.
+- **Resilience4j protection on LoginService calls**: The only synchronous dependency is session validation — which is a security requirement, not a business feature. It is protected with a circuit breaker to prevent LoginService degradation from cascading into this service.
+
 ---
 
 ## Technologies
@@ -149,6 +158,16 @@ POST /transactions
 
 ## Resilience4j Configuration
 
+### Why Resilience4j Here (and Not in Other Services)?
+
+The `/me` call to LoginService is the **only synchronous network dependency** in this service, and it is on the critical path of every transaction. Without resilience patterns:
+
+- A slow LoginService delays every transaction response (threads pile up waiting)
+- A down LoginService causes 100% transaction failure until recovered
+- A thread pool exhaustion in this service caused by LoginService degradation would make this service appear to be the faulty one (cascading failure)
+
+Resilience4j's circuit breaker detects degradation and fails-fast, preserving this service's resources for requests that can succeed. Retry absorbs transient blips without surfacing them to the client.
+
 ### Circuit Breaker — `loginService`
 
 | Property | Value | Meaning |
@@ -168,16 +187,20 @@ POST /transactions
 | Retry on | `IOException`, `TimeoutException`, `WebClientRequestException` |
 | Do NOT retry | `BusinessException`, `UnauthorizedException` |
 
+**Why not retry on business exceptions?** Retrying a `BusinessException` (e.g., `contractService == false`) or `UnauthorizedException` would not change the outcome — these are deterministic rejections, not transient failures. Retrying them wastes time and may confuse monitoring.
+
 ---
 
 ## Idempotency
 
 TransactionService supports the `X-Idempotency-Key` request header. If provided, the header value is used as the `eventId` of the SQS event. This allows:
 
-- Clients to safely retry a failed request
-- GameService to deduplicate by `eventId`
+- Clients to safely retry a failed request (e.g., a mobile app timeout) without double-processing
+- GameService to deduplicate by `eventId` regardless of how many times the message is redelivered
 
 If the header is absent, a new `UUID` is generated per request.
+
+**End-to-end idempotency chain**: the client's idempotency key flows through TransactionService → SQS event → GameService deduplication. This ensures the same business transaction is processed exactly once even if the client, TransactionService, or SQS redelivers the same operation.
 
 ---
 
@@ -191,14 +214,16 @@ TransactionService exposes Prometheus metrics via `/actuator/prometheus`:
 | `transactions.failures` | Counter | Total rejected/failed transactions |
 | `login.service.request.duration` | Timer | Duration of `/me` calls to LoginService |
 
+**Why metrics here?** TransactionService is the revenue-critical entry point. Monitoring transaction throughput and failure rates is the primary health signal for the system. The `/me` call duration metric is specifically important for detecting LoginService degradation before it triggers the circuit breaker.
+
 ---
 
 ## Integrations
 
 | Integration | Direction | Protocol | Notes |
 |-------------|-----------|----------|-------|
-| LoginService (`/me`) | Outbound | HTTP REST (WebClient) | Session validation on every transaction |
-| AWS SQS | Outbound | AWS SDK v2 | Publish `TransactionEvent` JSON |
+| LoginService (`/me`) | Outbound | HTTP REST (WebClient) | Session validation on every transaction — protected by circuit breaker + retry |
+| AWS SQS | Outbound | AWS SDK v2 | Publish `TransactionEvent` JSON — fire-and-forget after validation |
 
 ---
 
