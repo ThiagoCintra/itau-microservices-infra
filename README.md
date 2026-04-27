@@ -21,7 +21,7 @@ curl -fsSL \
 4. Print service URLs and quick-start curl examples
 5. Run the end-to-end smoke test automatically
 
-**Prerequisites:** Docker (with Compose v2 plugin or standalone `docker-compose`).
+**Prerequisites:** Docker (with Compose v2 plugin or standalone `docker-compose`), `curl`, and `unzip` (standard on macOS/Linux; pre-installed in GitHub Codespaces).
 
 > If you already have the repository on disk, run `make bootstrap` (or `bash setup.sh`) from the repo root instead.
 

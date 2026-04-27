@@ -119,11 +119,6 @@ SERVICES=(
   "game-service|http://localhost:8082/actuator/health"
 )
 
-INFRA=(
-  "redis|redis-cli ping|PONG"
-  "mongo|mongosh --eval db.adminCommand\\(\\''ping\\'\\) --quiet|ok"
-)
-
 _service_healthy() {
   local url="$1"
   local status
@@ -201,5 +196,9 @@ echo ""
 if [[ "${SKIP_E2E:-0}" != "1" ]] && ${all_healthy}; then
   info "Running end-to-end smoke test..."
   echo ""
-  bash scripts/e2e.sh "${USERNAME:-customer123}" "${PASSWORD:-secret}" || true
+  if bash scripts/e2e.sh "${USERNAME:-customer123}" "${PASSWORD:-secret}"; then
+    success "End-to-end smoke test passed."
+  else
+    warn "End-to-end smoke test finished with errors. Check output above."
+  fi
 fi
