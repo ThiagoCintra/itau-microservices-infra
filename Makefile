@@ -1,31 +1,31 @@
 # =============================================================================
-# Itaú Microservices — central infrastructure Makefile
+# Itaú Microservices — complete platform Makefile
 # =============================================================================
 
 .PHONY: up down restart logs health e2e queues clean
 
-# ── Infrastructure lifecycle ──────────────────────────────────────────────────
+# ── Full platform lifecycle ───────────────────────────────────────────────────
 
-## Start all shared infrastructure containers (Redis, MongoDB, LocalStack)
+## Build images and start the FULL platform (infra + all three services)
 up:
-	docker compose up -d
+	docker compose up -d --build
 	@echo ""
-	@echo "Infrastructure is starting. Run 'make health' to verify."
+	@echo "Platform is starting. Run 'make health' to verify all services."
 
-## Stop all infrastructure containers
+## Stop all containers
 down:
 	docker compose down
 
-## Restart all infrastructure containers
+## Restart everything
 restart: down up
 
-## Tail logs from all infrastructure containers
+## Tail logs from all containers
 logs:
 	docker compose logs -f
 
 # ── Validation ────────────────────────────────────────────────────────────────
 
-## Check that all infrastructure containers are healthy
+## Check that all containers (infra + services) are healthy
 health:
 	@echo "==> Redis:"
 	@docker exec redis redis-cli ping || echo "Redis not ready"
@@ -36,6 +36,15 @@ health:
 		--region us-east-1 \
 		--query 'QueueUrls' \
 		--output table 2>/dev/null || echo "LocalStack not ready"
+	@echo "==> LoginService (8081):"
+	@curl -sf http://localhost:8081/actuator/health || echo "LoginService not ready"
+	@echo ""
+	@echo "==> TransactionService (8080):"
+	@curl -sf http://localhost:8080/actuator/health || echo "TransactionService not ready"
+	@echo ""
+	@echo "==> GameService (8082):"
+	@curl -sf http://localhost:8082/actuator/health || echo "GameService not ready"
+	@echo ""
 
 ## Manually create/recreate the SQS queues (idempotent)
 queues:
@@ -55,7 +64,7 @@ queues:
 ## Run the full E2E flow (requires all three services to be running)
 ## Usage: make e2e  OR  make e2e USERNAME=Thiago PASSWORD=231299
 e2e:
-	@bash scripts/e2e.sh ${USERNAME} ${PASSWORD}
+	@bash scripts/e2e.sh "$${USERNAME:-customer123}" "$${PASSWORD:-secret}"
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 

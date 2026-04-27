@@ -1,11 +1,21 @@
 version: "3.9"
 
+# =============================================================================
+# Itaú Microservices — complete platform (infrastructure + application services)
+#
+# Start everything with:
+#   docker compose up -d --build
+#
+# Infra only (original behaviour):
+#   docker compose up -d redis mongo localstack
+# =============================================================================
+
 services:
 
-  # ─────────────────────────────────────────────
-  # Redis — session storage and rate limiting
-  # Used by: LoginService
-  # ─────────────────────────────────────────────
+  # ───────────────────────────────────────────────────────────────────────────
+  # INFRASTRUCTURE
+  # ───────────────────────────────────────────────────────────────────────────
+
   redis:
     image: redis:7-alpine
     container_name: redis
@@ -19,10 +29,6 @@ services:
     networks:
       - itau-net
 
-  # ─────────────────────────────────────────────
-  # MongoDB — event log / gamification audit store
-  # Used by: GameService
-  # ─────────────────────────────────────────────
   mongo:
     image: mongo:6.0
     container_name: mongo
@@ -40,11 +46,9 @@ services:
     networks:
       - itau-net
 
-  # ─────────────────────────────────────────────
-  # LocalStack — AWS SQS emulation
-  # Used by: TransactionService (producer) and GameService (consumer)
-  # Queues created automatically by the init script on startup
-  # ─────────────────────────────────────────────
+  # LocalStack — AWS SQS emulation.
+  # Queues (`transactions` and `transactions-dlq`) are created automatically
+  # by the init script in ./localstack/init/ when LocalStack becomes ready.
   localstack:
     image: localstack/localstack:3.0
     container_name: localstack
@@ -67,6 +71,105 @@ services:
       retries: 15
     networks:
       - itau-net
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # APPLICATION SERVICES  (built from ./services/<name>/)
+  # ───────────────────────────────────────────────────────────────────────────
+
+  # LoginService — authentication, JWT issuance, Redis session management
+  login-service:
+    build:
+      context: ./services/login-service
+      dockerfile: Dockerfile
+    container_name: login-service
+    ports:
+      - "8081:8081"
+    environment:
+      SERVER_PORT: "8081"
+      JWT_SECRET: "ChangeThisSecretKeyForProdUseAtLeast32Chars!"
+      JWT_EXPIRY_SECONDS: "300"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 10
+    networks:
+      - itau-net
+    restart: unless-stopped
+
+  # TransactionService — validates JWT, calls /me, publishes to SQS
+  transaction-service:
+    build:
+      context: ./services/transaction-service
+      dockerfile: Dockerfile
+    container_name: transaction-service
+    ports:
+      - "8080:8080"
+    environment:
+      SERVER_PORT: "8080"
+      JWT_SECRET: "ChangeThisSecretKeyForProdUseAtLeast32Chars!"
+      LOGIN_SERVICE_URL: "http://login-service:8081"
+      LOGIN_SERVICE_TIMEOUT_MILLIS: "2000"
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_ENDPOINT: "http://localstack:4566"
+      SQS_QUEUE_URL: "http://localstack:4566/000000000000/transactions"
+    depends_on:
+      localstack:
+        condition: service_healthy
+      login-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 25s
+      retries: 10
+    networks:
+      - itau-net
+    restart: unless-stopped
+
+  # GameService — SQS consumer, gamification engine, MongoDB persistence
+  game-service:
+    build:
+      context: ./services/game-service
+      dockerfile: Dockerfile
+    container_name: game-service
+    ports:
+      - "8082:8082"
+    environment:
+      SERVER_PORT: "8082"
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_ENDPOINT: "http://localstack:4566"
+      SQS_QUEUE_URL: "http://localstack:4566/000000000000/transactions"
+      SQS_DLQ_URL: "http://localstack:4566/000000000000/transactions-dlq"
+      SQS_MAX_RECEIVE_COUNT: "5"
+      SPRING_DATA_MONGODB_HOST: mongo
+      SPRING_DATA_MONGODB_PORT: "27017"
+      SPRING_DATA_MONGODB_DATABASE: game_db
+    depends_on:
+      localstack:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8082/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 10
+    networks:
+      - itau-net
+    restart: unless-stopped
 
 volumes:
   mongo-data:
